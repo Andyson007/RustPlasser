@@ -34,7 +34,7 @@ async function setupLayout() {
     if (layouttokens[i][0] != " ") {
       spot.classList.add("spot");
       spot.classList.add(["up", "right", "down", "left"][parseInt(layouttokens[i][0])]);
-      
+
       let img = document.createElement("img");
       img.src = "./Bord.svg";
       spot.appendChild(img);
@@ -55,15 +55,17 @@ function render() {
     spots[i].getElementsByTagName("p")[0].innerText = names[i];
   }
 }
-
+let val = 5
 // Startup 
 let start = async () => {
   await setupLayout();
   render();
   ws = new WebSocket(`ws://${window.location.hostname}:9003`);
   ws.addEventListener("message", (ev) => {
+    console.log(val)
+    val+=1
     names = ev.data.split(",");
-  render();
-});
+    render();
+  });
 }
 start();
