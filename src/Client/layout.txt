@@ -1,0 +1,14 @@
+ 00 13 100 
+          1
+          1
+2 223 1 22 
+
+
+/*
+0 - Up
+1 - Right
+2 - Down
+3 - Left
+
+All lines should be the same length
+*/
