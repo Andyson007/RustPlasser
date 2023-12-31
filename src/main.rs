@@ -79,16 +79,18 @@ async fn main() {
 
                 loop {
                     let val = rx.recv().await.unwrap();
-                    websocket
-                        .send(Message::from(
-                            val.iter()
-                                .map(|x| x.to_string())
-                                .collect::<Vec<String>>()
-                                .join(","),
-                        ))
-                        .unwrap();
+                    match websocket.send(Message::from(
+                        val.iter()
+                            .map(|x| x.to_string())
+                            .collect::<Vec<String>>()
+                            .join(","),
+                    )) {
+                        Ok(_) => (),
+                        Err(_) => break,
+                    }
                     println!("{val:?}");
                 }
+                println!("Client has disconnected");
             })
             .await
             .unwrap();
