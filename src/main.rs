@@ -4,7 +4,8 @@ use std::{
     fs::OpenOptions,
     io::{self, BufWriter, Write},
     net::TcpListener,
-    sync::{Arc, Mutex}, thread,
+    sync::{Arc, Mutex},
+    thread,
 };
 
 use tokio::sync::broadcast;
@@ -62,9 +63,13 @@ async fn main() {
             let current = Arc::clone(&current2);
             let tx = transmitter.lock().unwrap();
             let mut rx = tx.subscribe();
-            let mut websocket = accept(stream.unwrap()).unwrap_or_else(|err| {
-                panic!("Websocket accept function unwrap failed with err: {err}")
-            });
+            let mut websocket = match accept(stream.unwrap()) {
+                Ok(x) => x,
+                Err(x) => {
+                    println!("Handshakerror {x:?}");
+                    continue;
+                }
+            };
             let default = current.lock().unwrap().clone();
             websocket.send(Message::from(default.join(","))).unwrap();
             {
@@ -92,15 +97,23 @@ async fn main() {
         io::stdin().read_line(&mut String::new()).unwrap();
         let mut neighbours: HashMap<usize, HashSet<usize>> = HashMap::new();
         neighbours.insert(
-            history[history.len() - 1][0],
-            HashSet::from([(history[history.len() - 1][1])]),
+            history[0][0],
+            HashSet::from([(history[history.len() - 2][1])]),
         );
         neighbours.insert(
-            history[history.len() - 1][history[history.len() - 1].len() - 1],
-            HashSet::from([(history[history.len() - 1][history[history.len() - 1].len() - 2])]),
+            history[history.len() - 2][history[history.len() - 2].len() - 1],
+            HashSet::from([(history[history.len() - 2][history[history.len() - 2].len() - 2])]),
         );
-        for seat in history[history.len() - 1].windows(3) {
+        for seat in history[history.len() - 2].windows(3) {
             neighbours.insert(seat[1], HashSet::from([(seat[0]), (seat[2])]));
+        }
+        for neigbour in &neighbours {
+            print!("({}: ", names[*neigbour.0]);
+            for v in neigbour.1 {
+                print!(" {}", names[*v]);
+            }
+            print!("), ");
+            println!();
         }
         let mut list = history[history.len() - 1].clone();
 
@@ -115,16 +128,10 @@ async fn main() {
                     .iter()
                     .zip(&history[history.len() - 1])
                     .any(|(&a, &b)| section(a) == section(b))
-                && {
-                    !list.windows(3).any(|arr| {
-                        neighbours.get(&arr[1]).unwrap().contains(&arr[0])
-                            || neighbours.get(&arr[1]).unwrap().contains(&arr[2])
-                    }) && !neighbours.get(&list[0]).unwrap().contains(&list[1])
-                        && !neighbours
-                            .get(&list[list.len() - 1])
-                            .unwrap()
-                            .contains(&list[list.len() - 2])
-                }
+                && !list
+                    .windows(2)
+                    .map(|arr| (arr[0], arr[1]))
+                    .any(|(a, b)| neighbours.get(&a).unwrap().contains(&b))
             {
                 break;
             }
