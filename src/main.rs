@@ -108,12 +108,12 @@ async fn main() {
             neighbours.insert(seat[1], HashSet::from([(seat[0]), (seat[2])]));
         }
         for neigbour in &neighbours {
-          print!("({}: ", names[*neigbour.0]);
-          for v in neigbour.1 {
-            print!(" {}", names[*v]);
-          }
-          print!("), ");
-          println!();
+            print!("({}: ", names[*neigbour.0]);
+            for v in neigbour.1 {
+                print!(" {}", names[*v]);
+            }
+            print!("), ");
+            println!();
         }
         let mut list = history[history.len() - 1].clone();
 
@@ -128,16 +128,10 @@ async fn main() {
                     .iter()
                     .zip(&history[history.len() - 1])
                     .any(|(&a, &b)| section(a) == section(b))
-                && !{
-                    list.windows(3).any(|arr| {
-                        neighbours.get(&arr[1]).unwrap().contains(&arr[0])
-                            || neighbours.get(&arr[1]).unwrap().contains(&arr[2])
-                    }) || neighbours.get(&list[0]).unwrap().contains(&list[1])
-                        || neighbours
-                            .get(&list[list.len() - 1])
-                            .unwrap()
-                            .contains(&list[list.len() - 2])
-                }
+                && !list
+                    .windows(2)
+                    .map(|arr| (arr[0], arr[1]))
+                    .any(|(a, b)| neighbours.get(&a).unwrap().contains(&b))
             {
                 break;
             }
