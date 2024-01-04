@@ -11,3 +11,4 @@ rand = "0.8.5"
 serde_json = "1.0.108"
 tungstenite = "0.21.0"
 tokio = { version = "1", features = ["full"] }
+itertools = "0.12.0"
