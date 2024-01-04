@@ -63,7 +63,9 @@ async fn main() {
             let current = Arc::clone(&current2);
             let tx = transmitter.lock().unwrap();
             let mut rx = tx.subscribe();
-            let mut websocket = match accept(stream.unwrap()) {
+            let stream = stream.unwrap();
+            let ip = stream.peer_addr().unwrap();
+            let mut websocket = match accept(stream) {
                 Ok(x) => x,
                 Err(x) => {
                     println!("Handshakerror {x:?}");
@@ -71,18 +73,19 @@ async fn main() {
                 }
             };
             let default = current.lock().unwrap().clone();
+            println!("Sendt {} to {ip:?}", default.join(","));
             websocket.send(Message::from(default.join(","))).unwrap();
             {
                 thread::spawn(move || {
                     loop {
-                        println!("test");
                         let val = rx.blocking_recv().unwrap();
-                        match websocket.send(Message::from(
-                            val.iter()
-                                .map(|x| x.to_string())
-                                .collect::<Vec<String>>()
-                                .join(","),
-                        )) {
+                        let tosend = val
+                            .iter()
+                            .map(|x| x.to_string())
+                            .collect::<Vec<String>>()
+                            .join(",");
+                        println!("Sendt {tosend} to {ip:?}");
+                        match websocket.send(Message::from(tosend)) {
                             Ok(_) => (),
                             Err(_) => break,
                         }
@@ -97,7 +100,7 @@ async fn main() {
         io::stdin().read_line(&mut String::new()).unwrap();
         let mut neighbours: HashMap<usize, HashSet<usize>> = HashMap::new();
         neighbours.insert(
-            history[0][0],
+            history[history.len() - 2][0],
             HashSet::from([(history[history.len() - 2][1])]),
         );
         neighbours.insert(
@@ -127,7 +130,19 @@ async fn main() {
                 && !list
                     .iter()
                     .zip(&history[history.len() - 1])
-                    .any(|(&a, &b)| section(a) == section(b))
+                    .any(|(&a, &b)| {
+                        section(
+                            history[history.len() - 1]
+                                .iter()
+                                .position(|x| *x == a)
+                                .unwrap(),
+                        ) == section(
+                            history[history.len() - 1]
+                                .iter()
+                                .position(|x| *x == b)
+                                .unwrap(),
+                        )
+                    })
                 && !list
                     .windows(2)
                     .map(|arr| (arr[0], arr[1]))
@@ -137,14 +152,14 @@ async fn main() {
             }
             i += 1;
         }
+        // write_history(&json!({"history": history}));
         println!("{i}");
         history.push(list.clone());
-        // println!("{list:?}");
+        println!("{list:?}");
         println!("{:?}", mapnames(&list, &names));
         let names = mapnames(&fliplast(&list), &names);
         *current.lock().unwrap() = names.clone();
         tx.send(names).unwrap();
-        // write_history(&json!({"history": history}));
     }
 }
 
