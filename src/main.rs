@@ -1,3 +1,52 @@
+enum Input {
+    Write(bool),
+    Scramble { iters: usize, sleep: u64 },
+    Reset,
+}
+
+impl Input {
+    pub fn read() -> Option<Self> {
+        let mut line = String::new();
+        io::stdin()
+            .read_line(&mut line)
+            .expect("Error while reading line");
+        let line = line.lines().nth(0).unwrap();
+        let split = line.split_whitespace().collect::<Vec<&str>>();
+        if split.len() == 0 {
+            return Some(Input::Scramble {
+                iters: 1,
+                sleep: 500,
+            });
+        }
+        match split[0] {
+            "write" => {
+                if split.len() > 1 {
+                    Some(Input::Write(split[1] == "json"))
+                } else {
+                    Some(Input::Write(false))
+                }
+            }
+            "reset" => Some(Input::Reset),
+            _ => {
+                if !split.iter().all(|x| x.chars().all(|x| x.is_digit(10))) {
+                    return None;
+                }
+                match split.len() {
+                    0 => unreachable!(),
+                    1 => Some(Input::Scramble {
+                        iters: split[0].parse::<usize>().unwrap(),
+                        sleep: 500,
+                    }),
+                    2.. => Some(Input::Scramble {
+                        iters: split[0].parse::<usize>().unwrap(),
+                        sleep: split[1].parse::<u64>().unwrap(),
+                    }),
+                }
+            }
+        }
+    }
+}
+
 use itertools::Itertools;
 use serde_json::{json, Value};
 use std::{
@@ -22,7 +71,8 @@ async fn main() {
         .iter()
         .map(|v| v.as_str().unwrap())
         .collect();
-    let history: Value = serde_json::from_str(include_str!("../history.json")).unwrap();
+    let history: Value = serde_json::from_str(include_str!("../history.json"))
+        .expect("Couldn't find file history.json");
     let mut history =
         history["history"]
             .as_array()
@@ -70,49 +120,36 @@ async fn main() {
         let previous_seating = &history[history.len() - 2];
         let current_seating = &history[history.len() - 1];
 
-        let mut input = String::new();
-        io::stdin().read_line(&mut input).unwrap();
-        let mut split_input = input.split_whitespace().collect::<Vec<&str>>();
-        match *split_input.iter().nth(0).unwrap_or(&"Regular") {
-            "write" => {
+        let input = loop {
+            if let Some(x) = Input::read() {
+                break x;
+            }
+            println!("Invalid input");
+        };
+        match input {
+            Input::Write(x) => {
                 if *current_seating == list {
                     println!("Already pushed");
                 } else {
                     println!("pushing");
                     history.push(list.clone());
                     neighbours = generate_neighbours(&list);
-                    println!("Do you want to write to the json file? (yes/no) full words");
-                    let mut ans = String::new();
-                    io::stdin()
-                        .read_line(&mut ans)
-                        .expect("Failed to read from stdin");
-                    if ans.lines().nth(0).unwrap() == "yes" {
-                        write_history(&json!({"history": history}));
-                        println!("Wrote to json");
-                    }
                     println!("{history:?}")
                 }
-            }
-            _ => {
-                if split_input.iter().nth(0) == Some(&"Regular") {
-                    split_input.remove(0);
+                if x {
+                    write_history(&json!({"history": history}));
+                    println!("Wrote to json");
                 }
-                let iters = split_input
-                    .iter()
-                    .nth(0)
-                    .unwrap_or(&"1")
-                    .parse::<u64>()
-                    .unwrap_or(1);
-                let sleep_time = split_input
-                    .iter()
-                    .nth(1)
-                    .unwrap_or(&"500")
-                    .parse::<u64>()
-                    .unwrap_or(500);
-
+            }
+            Input::Reset => {
+                let names = mapnames(&fliplast(current_seating), &names);
+                *current.lock().unwrap() = names.clone();
+                tx.send(names).unwrap();
+            }
+            Input::Scramble { iters, sleep } => {
                 for iter in 0..iters {
                     if iter > 1 {
-                        thread::sleep(std::time::Duration::from_millis(sleep_time));
+                        thread::sleep(std::time::Duration::from_millis(sleep));
                     }
                     generate_seating(
                         &mut list,
@@ -171,14 +208,6 @@ fn generate_neighbours(seating: &Vec<usize>) -> HashMap<usize, HashSet<usize>> {
     for seat in seating.windows(3) {
         neighbours.insert(seat[1], HashSet::from([(seat[0]), (seat[2])]));
     }
-    // for neigbour in &neighbours {
-    //     print!("({}: ", *neigbour.0);
-    //     for v in neigbour.1 {
-    //         print!(" {}", *v);
-    //     }
-    //     print!("), ");
-    //     println!();
-    // }
     neighbours
 }
 
@@ -249,19 +278,3 @@ fn generate_seating(
     }
     println!("{i}");
 }
-
-// enum Opt {
-//     Value(usize),
-//     Other(String),
-// }
-//
-// enum Input{
-//     Write(Vec<Opt>),
-//     Scramble(Vec<Opt>),
-// }
-//
-// impl Input {
-//   pub fn read() -> Self {
-//
-//   }
-// }
