@@ -1,3 +1,21 @@
+use itertools::Itertools;
+use serde_json::{json, Value};
+use std::{
+    collections::{HashMap, HashSet},
+    fs::OpenOptions,
+    io::{self, BufWriter, Write},
+    net::TcpListener,
+    ops::{Index, IndexMut},
+    slice::SliceIndex,
+    sync::{Arc, Mutex},
+    thread,
+};
+
+use tokio::sync::broadcast;
+use tungstenite::{accept, Message};
+
+use rand::{prelude::SliceRandom, random};
+
 enum Input {
     Write(bool),
     Scramble { iters: usize, sleep: u64 },
@@ -12,7 +30,7 @@ impl Input {
             .expect("Error while reading line");
         let line = line.lines().nth(0).unwrap();
         let split = line.split_whitespace().collect::<Vec<&str>>();
-        if split.len() == 0 {
+        if split.is_empty() {
             return Some(Input::Scramble {
                 iters: 1,
                 sleep: 500,
@@ -28,7 +46,7 @@ impl Input {
             }
             "reset" => Some(Input::Reset),
             _ => {
-                if !split.iter().all(|x| x.chars().all(|x| x.is_digit(10))) {
+                if !split.iter().all(|x| x.chars().all(|x| x.is_ascii_digit())) {
                     return None;
                 }
                 match split.len() {
@@ -47,21 +65,6 @@ impl Input {
     }
 }
 
-use itertools::Itertools;
-use serde_json::{json, Value};
-use std::{
-    collections::{HashMap, HashSet},
-    fs::OpenOptions,
-    io::{self, BufWriter, Write},
-    net::TcpListener,
-    sync::{Arc, Mutex},
-    thread,
-};
-
-use tokio::sync::broadcast;
-use tungstenite::{accept, Message};
-
-use rand::prelude::SliceRandom;
 #[tokio::main]
 async fn main() {
     let names: Value = serde_json::from_str(include_str!("../names.json")).unwrap();
@@ -80,15 +83,15 @@ async fn main() {
             .iter()
             .map(|arr| {
                 arr.as_array()
-                .expect(
-                    format!("Each element within history should be an array. One of them isn't an array: {arr:?}").as_str(),
+                .unwrap_or_else(||
+                    panic!("Each element within history should be an array. One of them isn't an array: {arr:?}"),
                 )
                 .iter()
                 .map(|value| {
-                    (*value).as_u64().expect(format!(
+                    value.as_u64().unwrap_or_else(||panic!(
                         "A subelement of an array of history is not a u64: {}",
                         *value
-                    ).as_str()) as usize
+                    )) as usize
                 })
                 .inspect(|v| {
                     if *v >= 16 {
@@ -106,7 +109,7 @@ async fn main() {
     let (tx, _rx) = broadcast::channel::<Vec<String>>(1024);
     let transmitter = Arc::new(Mutex::new(tx.clone()));
     let current = Arc::new(Mutex::new(mapnames(
-        &fliplast(&history.last().unwrap()),
+        &fliplast(history.last().unwrap()),
         &names,
     )));
     let current2 = Arc::clone(&current);
@@ -137,7 +140,16 @@ async fn main() {
                     println!("{history:?}")
                 }
                 if x {
-                    write_history(&json!({"history": history}));
+                    let to_write = json!({"history": history});
+                    let mut writer = BufWriter::new(
+                        OpenOptions::new()
+                            .write(true)
+                            .truncate(true)
+                            .open("history.json")
+                            .unwrap(),
+                    );
+                    serde_json::to_writer_pretty(&mut writer, &to_write).unwrap();
+                    writer.flush().unwrap();
                     println!("Wrote to json");
                 }
             }
@@ -170,35 +182,26 @@ fn section(value: usize) -> usize {
     vec![0, 0, 1, 1, 2, 2, 3, 3, 3, 3, 2, 2, 1, 1, 0, 0][value]
 }
 
-fn fliplast(list: &Vec<usize>) -> Vec<usize> {
+fn fliplast(list: &[usize]) -> Vec<usize> {
+    let amount = 8;
     list.iter()
-        .take(9)
-        .chain(list.iter().skip(9).rev())
-        .map(|x| *x)
+        .take(amount)
+        .chain(list.iter().skip(amount).rev())
+        .copied()
         .collect::<Vec<usize>>()
 }
 
-fn write_history(to_write: &Value) {
-    let mut writer = BufWriter::new(
-        OpenOptions::new()
-            .write(true)
-            .truncate(true)
-            .open("history.json")
-            .unwrap(),
-    );
-    serde_json::to_writer_pretty(&mut writer, &to_write).unwrap();
-    writer.flush().unwrap();
-}
-
-fn mapnames(indicies: &Vec<usize>, names: &Vec<&str>) -> Vec<String> {
+fn mapnames(indicies: &[usize], names: &[&str]) -> Vec<String> {
     let mut ret = Vec::new();
     for &i in indicies {
         ret.push(names[i].to_string());
     }
+    ret.insert(2, "".to_string());
+    ret.insert(8, "".to_string());
     ret
 }
 
-fn generate_neighbours(seating: &Vec<usize>) -> HashMap<usize, HashSet<usize>> {
+fn generate_neighbours(seating: &[usize]) -> HashMap<usize, HashSet<usize>> {
     let mut neighbours: HashMap<usize, HashSet<usize>> = HashMap::new();
     neighbours.insert(seating[0], HashSet::from([seating[1]]));
     neighbours.insert(
@@ -253,28 +256,119 @@ fn serve_server(
     }
 }
 
+#[derive(Debug, Copy, Clone)]
+struct HeatMap {
+    heatmap: [f64; 16],
+}
+
+impl<Idx> IndexMut<Idx> for HeatMap
+where
+    Idx: SliceIndex<[f64], Output = f64>,
+{
+    fn index_mut(&mut self, index: Idx) -> &mut Self::Output {
+        &mut self.heatmap[index]
+    }
+}
+
+impl<Idx> Index<Idx> for HeatMap
+where
+    Idx: SliceIndex<[f64], Output = f64>,
+{
+    type Output = f64;
+
+    fn index(&self, index: Idx) -> &Self::Output {
+        &self.heatmap[index]
+    }
+}
+
+impl Default for HeatMap {
+    fn default() -> Self {
+        HeatMap {
+            heatmap: [1.0f64; 16],
+        }
+    }
+}
+
 fn generate_seating(
     list: &mut Vec<usize>,
     seating: &[&Vec<usize>; 2],
     neighbours: &HashMap<usize, HashSet<usize>>,
 ) {
     let (previous_seating, current_seating) = (seating[0], seating[1]);
+    let mut people = [HeatMap::default(); 16];
+
+    for i in previous_seating.iter().enumerate() {
+        // Set the heatmap for the current person in the current seat
+        people[*i.1][i.0] = 0.0;
+    }
+
+    for i in current_seating.iter().enumerate() {
+        // Set the heatmap for the current person in the current seat
+        // people[*i.1][i.0] = 0.0;
+        let sectionnum = section(i.0);
+        for (spot, weight) in people[*i.1].heatmap.iter_mut().enumerate() {
+            if section(spot) == sectionnum {
+                *weight = 0.0f64;
+            }
+        }
+    }
+
+    let ans = generate_seating_from_map(&people, Vec::new());
+    println!("{ans:?}");
+
     let mut i = 0;
     loop {
         i += 1;
-        list.shuffle(&mut rand::thread_rng());
-        if !list.iter().zip(previous_seating).any(|(a, b)| *a == *b)
-            && !list.iter().zip(current_seating).any(|(&a, &b)| {
-                section(current_seating.iter().position(|x| *x == a).unwrap())
-                    == section(current_seating.iter().position(|x| *x == b).unwrap())
-            })
-            && !list
-                .iter()
-                .tuple_windows()
-                .any(|(a, b)| neighbours.get(&a).unwrap().contains(&b))
+        *list = generate_seating_from_map(&people, Vec::new()).unwrap();
+        // list.shuffle(&mut rand::thread_rng());
+        if !list
+            .iter()
+            .tuple_windows()
+            .any(|(a, b)| neighbours.get(a).unwrap().contains(b))
         {
             break;
         }
     }
     println!("{i}");
+}
+
+fn generate_seating_from_map(
+    people: &[HeatMap; 16],
+    mut current: Vec<usize>,
+) -> Option<Vec<usize>> {
+    if current.len() == 16 {
+        return Some(current);
+    }
+    let mut blacklist = HashSet::new();
+
+    let iters = 16 - current.len() - blacklist.len();
+    for _ in 0..iters {
+        let mut iter = people
+            .iter()
+            .enumerate()
+            .filter(|x| !current.contains(&x.0) && !blacklist.contains(&x.0));
+
+        let sum = iter
+            .clone()
+            .map(|x| x.1)
+            .map(|x| x[current.len()])
+            .sum::<f64>();
+        let rand = random::<f64>() * sum;
+
+        let mut curr = 0f64;
+        let mut ans = 0;
+
+        while curr < rand {
+            let val = iter.next()?;
+            curr += val.1[current.len()];
+            ans = val.0;
+        }
+
+        current.push(ans);
+        if let Some(x) = generate_seating_from_map(people, current.clone()) {
+            return Some(x);
+        }
+        blacklist.insert(ans);
+    }
+    None
 }
